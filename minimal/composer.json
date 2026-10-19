@@ -1,0 +1,13 @@
+{
+    "name": "local/minimal",
+    "type": "project",
+    "require": {
+        "payxy/payxy-php-sdk": "^1.0",
+        "guzzlehttp/guzzle": "^8.3"
+    },
+    "config": {
+        "allow-plugins": {
+            "php-http/discovery": false
+        }
+    }
+}

@@ -1,0 +1,13 @@
+.junie
+payxy_payments_only_collection.json
+Payxy PHP SDK Core Alignment TODO.md
+.idea
+/minimal/vendor
+/composer.lock
+/.phpunit.cache/
+/.php-cs-fixer.cache
+/examples/demo/.env
+.claude
+/playground/
+/vendor
+.env

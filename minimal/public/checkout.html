@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Checkout</title>
+  <!-- Payxy's official browser overlay (optional; used only on HTTPS pages) -->
+  <script src="https://cdn.jsdelivr.net/npm/@proximafortedev/payxy@1.0.10/dist/payxy.umd.js"
+          integrity="sha384-e3N1dHTAU46Hn0DHlKIE0hEbnqB4Ecd1j7lhOvGRey7VdSxzcDdUZeV4XzdYOciV"
+          crossorigin="anonymous" defer></script>
+</head>
+<body>
+  <button id="pay" type="button">Pay ₦100.00</button>
+  <p id="status" role="status"></p>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const payButton = document.getElementById('pay');
+
+    async function startPayment() {
+      payButton.disabled = true;
+      statusEl.textContent = 'Starting payment…';
+
+      const response = await fetch('/api/checkout.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: '{}',
+      });
+      if (!response.ok) {
+        statusEl.textContent = 'Payment could not be started. Please try again.';
+        payButton.disabled = false;
+        return;
+      }
+      const session = await response.json();
+
+      // Payxy's checkout can only be framed by HTTPS pages; otherwise use a full redirect.
+      if (location.protocol === 'https:' && window.Payxy?.Payxy) {
+        new window.Payxy.Payxy({
+          accessCode: session.accessCode,
+          environment: session.environment,          // "staging" (pk_test_) or "production" (pk_live_)
+          onSuccess: showResult,                     // UI signals only: the server verifies
+          onError: showResult,
+          onClose: () => { payButton.disabled = false; statusEl.textContent = ''; },
+        }).init();
+      } else {
+        location.assign(session.paymentUrl);
+      }
+    }
+
+    async function showResult() {
+      statusEl.textContent = 'Confirming payment…';
+      const response = await fetch('/api/verify.php', { credentials: 'same-origin' });
+      const result = await response.json();
+      const messages = {
+        paid: `Payment successful. Reference: ${result.reference}`,
+        pending: 'Payment is processing. We will update you shortly.',
+        failed: `Payment failed: ${result.message ?? 'please try again.'}`,
+        not_attempted: 'The payment was not completed.',
+      };
+      statusEl.textContent = messages[result.status] ?? 'We could not confirm the payment yet.';
+      payButton.disabled = result.status === 'paid';
+    }
+
+    payButton.addEventListener('click', startPayment);
+    if (new URLSearchParams(location.search).has('returned')) {
+      showResult();                                   // back from the hosted checkout redirect
+    }
+  </script>
+</body>
+</html>
