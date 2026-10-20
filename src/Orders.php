@@ -7,22 +7,19 @@ namespace Playground;
 use Payxy\Support\Amount;
 
 /**
- * Stand-in for a merchant's orders table: a JSON file in the system temp directory.
+ * Stand-in for a merchant's orders table, kept in the encrypted State cookie so it works on
+ * serverless hosts. A real shop stores orders in its database.
  */
 final class Orders
 {
-    private readonly string $path;
-
-    public function __construct()
-    {
-        $this->path = sys_get_temp_dir() . '/payxy-playground-orders.json';
-    }
+    private const KEY = 'orders';
+    private const KEEP = 10;
 
     public function create(string $transactionId, Amount $amount, string $email, string $flow): void
     {
         $all = $this->all();
         $all[$transactionId] = ['amount' => $amount->toMinorUnits(), 'email' => $email, 'flow' => $flow, 'status' => 'awaiting payment'];
-        $this->write($all);
+        State::set(self::KEY, \array_slice($all, -self::KEEP, null, true));
     }
 
     public function markStatus(string $transactionId, string $status): void
@@ -30,7 +27,7 @@ final class Orders
         $all = $this->all();
         if (isset($all[$transactionId])) {
             $all[$transactionId]['status'] = $status;
-            $this->write($all);
+            State::set(self::KEY, $all);
         }
     }
 
@@ -38,7 +35,7 @@ final class Orders
     {
         $row = $this->all()[$transactionId] ?? null;
 
-        return $row === null ? null : Amount::fromMinorUnits((int) $row['amount']);
+        return \is_array($row) ? Amount::fromMinorUnits((int) $row['amount']) : null;
     }
 
     /**
@@ -46,17 +43,8 @@ final class Orders
      */
     public function all(): array
     {
-        $raw = is_file($this->path) ? file_get_contents($this->path) : false;
-        $data = $raw === false ? [] : json_decode($raw, true);
+        $all = State::get(self::KEY, []);
 
-        return \is_array($data) ? $data : [];
-    }
-
-    /**
-     * @param array<string, mixed> $all
-     */
-    private function write(array $all): void
-    {
-        file_put_contents($this->path, json_encode($all, \JSON_PRETTY_PRINT), \LOCK_EX);
+        return \is_array($all) ? $all : [];
     }
 }

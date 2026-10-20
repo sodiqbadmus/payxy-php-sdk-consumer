@@ -5,7 +5,8 @@ declare(strict_types=1);
 /**
  * Payxy Playground: a small merchant app consuming payxy/payxy-php-sdk from Packagist.
  *
- *   php -S localhost:8081 -t public public/index.php
+ *   php -S localhost:8081 -t public api/index.php      (locally)
+ *   Vercel: vercel.json routes every non-static request here (vercel-php runtime)
  *
  * Flows:
  *   /backend        Backend (API only): our PHP calls initialize() and verify() directly.
@@ -27,19 +28,20 @@ use Payxy\ResponseCode;
 use Payxy\Support\Amount;
 use Payxy\Support\Reference;
 use Playground\Orders;
+use Playground\State;
 use Playground\ShopCheckout;
 use Playground\View;
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
-if ($path !== '/' && is_file(__DIR__ . $path)) {
-    return false; // static files under public/ are served by the built-in server
+if (serveStatic($path)) {
+    return false; // local php -S serves files under public/ itself
 }
 
 require __DIR__ . '/../vendor/autoload.php';
 loadEnv(__DIR__ . '/../.env');
-session_start(['cookie_httponly' => true, 'cookie_samesite' => 'Lax']);
-
-$baseUrl = rtrim((string) (getenv('PLAYGROUND_URL') ?: 'http://localhost:8081'), '/');
+$baseUrl = rtrim((string) (getenv('PLAYGROUND_URL') ?: vercelUrl() ?? 'http://localhost:8081'), '/');
+// Cookie state instead of PHP sessions: serverless invocations don't share session files.
+State::boot((string) (getenv('APP_KEY') ?: 'payxy-playground:' . getenv('PAYXY_PUBLIC_KEY')), str_starts_with($baseUrl, 'https://'));
 $payxy = new Payxy(new PayxyConfig(
     publicKey: (string) getenv('PAYXY_PUBLIC_KEY'),
     webhookSecret: getenv('PAYXY_WEBHOOK_SECRET') ?: null,
@@ -113,7 +115,7 @@ function backendPay(Payxy $payxy, Orders $orders, string $baseUrl): void
     $transactionId = Reference::generate('BE');
 
     $orders->create($transactionId, $amount, $email, 'backend');
-    $_SESSION['backend_transaction_id'] = $transactionId;
+    State::set('backend_transaction_id', $transactionId);
 
     $response = $payxy->payments()->initialize(new InitializePaymentRequest(
         email: $email,
@@ -130,7 +132,7 @@ function backendPay(Payxy $payxy, Orders $orders, string $baseUrl): void
 /** Backend: verify with the id from OUR session, never from the redirect query. */
 function backendReturn(Payxy $payxy, Orders $orders): void
 {
-    $transactionId = $_SESSION['backend_transaction_id'] ?? null;
+    $transactionId = State::get('backend_transaction_id');
     $transactionId = recheckId($orders) ?? $transactionId;
     if (!is_string($transactionId) || !isset($orders->all()[$transactionId])) {
         echo View::page('Backend result', '<p>No backend order in this session. <a href="/backend">Start one</a>.</p>');
@@ -175,14 +177,14 @@ function sdkPage(Payxy $payxy, Orders $orders, string $baseUrl): void
 
     $session = $checkout->start(new CheckoutRequest(email: $email, amount: $amount, metadata: ['flow' => 'sdk-page'], productDescription: 'Playground order'));
     $orders->create($session->transactionId, $amount, $email, 'sdk-page');
-    $_SESSION['sdk_transaction_id'] = $session->transactionId;
+    State::set('sdk_transaction_id', $session->transactionId);
 
     echo $checkout->renderPage($session); // popup on https, redirect fallback on http
 }
 
 function sdkReturn(Payxy $payxy, Orders $orders, string $baseUrl): void
 {
-    $transactionId = $_SESSION['sdk_transaction_id'] ?? null;
+    $transactionId = State::get('sdk_transaction_id');
     $transactionId = recheckId($orders) ?? $transactionId;
     if (!is_string($transactionId) || !isset($orders->all()[$transactionId])) {
         echo View::page('SDK page result', '<p>No order in this session. <a href="/frontend/sdk">Start one</a>.</p>');
@@ -230,8 +232,8 @@ function apiCheckout(Payxy $payxy, Orders $orders, string $baseUrl): void
     $checkout = new ShopCheckout($payxy, $orders, $baseUrl . '/frontend/return');
     $session = $checkout->start(new CheckoutRequest(email: $email, amount: $amount, metadata: ['flow' => 'js-app'], productDescription: 'Playground order'));
     $orders->create($session->transactionId, $amount, $email, 'js-app');
-    $_SESSION['js_transactions'][] = $session->transactionId;
-    $_SESSION['js_transaction_id'] = $session->transactionId;
+    State::push('js_transactions', $session->transactionId);
+    State::set('js_transaction_id', $session->transactionId);
 
     json($session->toArray()); // no secrets: id, accessCode, paymentUrl, amount, currency, environment
 }
@@ -239,10 +241,10 @@ function apiCheckout(Payxy $payxy, Orders $orders, string $baseUrl): void
 function apiConfirm(Payxy $payxy, Orders $orders, string $baseUrl, string $transactionId): void
 {
     if ($transactionId === 'current') {
-        $transactionId = (string) ($_SESSION['js_transaction_id'] ?? '');
+        $transactionId = (string) State::get('js_transaction_id', '');
     }
     // A browser may only ask about transactions it started in this session.
-    if (!in_array($transactionId, $_SESSION['js_transactions'] ?? [], true)) {
+    if (!in_array($transactionId, (array) State::get('js_transactions', []), true)) {
         json(['error' => 'unknown transaction for this session'], 404);
         return;
     }
@@ -348,6 +350,38 @@ function notFound(): void
 {
     http_response_code(404);
     echo View::page('Not found', '<p><a href="/">All flows</a></p>');
+}
+
+/**
+ * Public URL of this deployment on Vercel (the production domain, or a preview deployment's URL).
+ */
+function vercelUrl(): ?string
+{
+    $host = getenv('VERCEL_ENV') === 'production' ? getenv('VERCEL_PROJECT_PRODUCTION_URL') : getenv('VERCEL_URL');
+
+    return is_string($host) && $host !== '' ? 'https://' . $host : null;
+}
+
+/**
+ * Serves files from public/. Returns true when local `php -S` should serve the file itself;
+ * on Vercel the file is streamed from here and the script exits.
+ */
+function serveStatic(string $path): bool
+{
+    $root = realpath(__DIR__ . '/../public');
+    $file = $path === '/' || $root === false ? false : realpath($root . $path);
+    if ($file === false || !is_file($file) || !str_starts_with($file, $root . DIRECTORY_SEPARATOR)) {
+        return false;   // not a static file (or a traversal attempt): the router handles it
+    }
+    if (PHP_SAPI === 'cli-server' && getenv('VERCEL') === false) {
+        return true;
+    }
+
+    $types = ['css' => 'text/css', 'js' => 'application/javascript', 'html' => 'text/html', 'svg' => 'image/svg+xml', 'png' => 'image/png', 'ico' => 'image/x-icon'];
+    header('Content-Type: ' . ($types[strtolower(pathinfo($file, PATHINFO_EXTENSION))] ?? 'application/octet-stream') . '; charset=utf-8');
+    header('Cache-Control: public, max-age=300');
+    readfile($file);
+    exit;
 }
 
 function loadEnv(string $file): void
