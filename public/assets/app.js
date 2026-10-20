@@ -37,6 +37,7 @@
   async function showResult(box) {
     var res = await fetch('/api/payments/current');
     var data = await res.json();
+    console.log('[payxy-verify]', data);
     if (!res.ok) { box.innerHTML = '<p class="alert"></p>'; box.firstChild.textContent = data.error || data.message; return; }
 
     var tone = data.outcome === 'successful' ? 'ok' : data.outcome === 'pending' ? 'warn' : 'bad';

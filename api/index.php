@@ -165,6 +165,7 @@ function backendReturn(Payxy $payxy, Orders $orders): void
     $orders->markStatus($transactionId, $label);
 
     echo View::page('Backend result', View::table(['Result' => View::badge($label, $tone)] + verificationRows($transactionId, $expected, $verification))
+        . debugVerification('backend', $transactionId, $expected, $verification)
         . links('/backend/return?recheck=' . rawurlencode($transactionId), '/backend'));
 }
 
@@ -202,7 +203,9 @@ function sdkReturn(Payxy $payxy, Orders $orders, string $baseUrl): void
     $rows = ['Outcome' => View::badge($result->outcome->name, $tone)]
         + verificationRows($transactionId, $orders->amount($transactionId), $result->verification);
 
-    echo View::page('SDK page result', View::table($rows) . links('/frontend/sdk/return?recheck=' . rawurlencode($transactionId), '/frontend/sdk'));
+    echo View::page('SDK page result', View::table($rows)
+        . debugVerification('sdk-page', $transactionId, $orders->amount($transactionId), $result->verification)
+        . links('/frontend/sdk/return?recheck=' . rawurlencode($transactionId), '/frontend/sdk'));
 }
 
 /** Frontend (JS app): a static shell; all logic is in public/assets/app.js. */
@@ -252,6 +255,7 @@ function apiConfirm(Payxy $payxy, Orders $orders, string $baseUrl, string $trans
     $result = (new ShopCheckout($payxy, $orders, $baseUrl . '/frontend/return'))->confirm($transactionId);
     $orders->markStatus($transactionId, $result->outcome->value);
     $v = $result->verification;
+    debugVerification('js-app', $transactionId, $orders->amount($transactionId), $v);
 
     json([
         'transactionId' => $transactionId,
@@ -269,6 +273,7 @@ function apiConfirm(Payxy $payxy, Orders $orders, string $baseUrl, string $trans
             'gatewayResponse' => $v->getGatewayResponse(),
             'paymentReference' => $v->getPaymentReference(),
             'card' => trim(($v->getCardType() ?? '') . ' ' . ($v->getMaskedCardPan() ?? '')) ?: null,
+            'raw' => $v->toArray(),
         ],
     ]);
 }
@@ -314,6 +319,25 @@ function verificationRows(string $transactionId, ?Amount $expected, ?VerifyPayme
         'Payment reference' => View::e($v?->getPaymentReference() ?? '—'),
         'Card' => View::e(trim(($v?->getCardType() ?? '') . ' ' . ($v?->getMaskedCardPan() ?? '')) ?: '—'),
     ];
+}
+
+/**
+ * Logs the raw verify response next to our order amount, to the server log (Vercel function
+ * logs) and, via the returned <script>, to the browser console. Sandbox debugging only.
+ */
+function debugVerification(string $flow, string $transactionId, ?Amount $expected, ?VerifyPaymentResponse $v): string
+{
+    $entry = [
+        'flow' => $flow,
+        'transactionId' => $transactionId,
+        'orderAmount' => $expected === null ? null : (string) $expected,
+        'amountMatches' => $expected !== null && $v !== null ? $v->amountMatches($expected, 'NGN') : null,
+        'raw' => $v?->toArray(),
+    ];
+    $json = (string) json_encode($entry, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_PARTIAL_OUTPUT_ON_ERROR);
+    error_log('[payxy-verify] ' . $json);
+
+    return '<script>console.log("[payxy-verify]", ' . $json . ');</script>';
 }
 
 /** The explicit "Re-check status" link names one of our own orders. */
