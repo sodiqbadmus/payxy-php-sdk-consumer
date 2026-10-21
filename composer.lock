@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "6dbf7a7eefd10bbe8eef1e0de151492a",
+    "content-hash": "bc226b8c22e1afef7919a7c28d04ec30",
     "packages": [
         {
             "name": "guzzlehttp/guzzle",
@@ -339,7 +339,7 @@
         },
         {
             "name": "payxy/payxy-php-sdk",
-            "version": "dev-master",
+            "version": "v1.0.3",
             "source": {
                 "type": "git",
                 "url": "https://github.com/Proximaforte/payxy-php-sdk.git",
@@ -384,7 +384,6 @@
                 "guzzlehttp/guzzle": "Default HTTP client; the SDK configures timeouts and TLS verification for it automatically.",
                 "symfony/http-client": "Alternative HTTP client; also configured automatically."
             },
-            "default-branch": true,
             "type": "library",
             "extra": {
                 "laravel": {
@@ -415,7 +414,7 @@
             ],
             "support": {
                 "issues": "https://github.com/Proximaforte/payxy-php-sdk/issues",
-                "source": "https://github.com/Proximaforte/payxy-php-sdk/tree/master"
+                "source": "https://github.com/Proximaforte/payxy-php-sdk/tree/v1.0.3"
             },
             "time": "2026-10-21T13:04:53+00:00"
         },
@@ -909,18 +908,9 @@
         }
     ],
     "packages-dev": [],
-    "aliases": [
-        {
-            "package": "payxy/payxy-php-sdk",
-            "version": "9999999-dev",
-            "alias": "1.1.0",
-            "alias_normalized": "1.1.0.0"
-        }
-    ],
+    "aliases": [],
     "minimum-stability": "stable",
-    "stability-flags": {
-        "payxy/payxy-php-sdk": 20
-    },
+    "stability-flags": {},
     "prefer-stable": false,
     "prefer-lowest": false,
     "platform": {
