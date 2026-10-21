@@ -20,12 +20,11 @@ final class ShopCheckout extends PayxyCheckout
 
     protected ?string $bodyColor = '#F4F6FA';
 
-    protected ?string $footerText = 'Sandbox playground';
-
     public function __construct(Payxy $payxy, private readonly Orders $orders, private readonly string $returnUrl, CheckoutDisplay $display = CheckoutDisplay::Redirect)
     {
         parent::__construct($payxy);
         $this->display = $display;
+        $this->footerText = 'Payxy Playground · ' . $payxy->getConfig()->environment->name;
     }
 
     protected function callbackUrl(): string
@@ -36,5 +35,10 @@ final class ShopCheckout extends PayxyCheckout
     protected function expectedAmount(string $transactionId): ?Amount
     {
         return $this->orders->amount($transactionId);
+    }
+
+    protected function feeAllowance(string $transactionId, Amount $expected): ?Amount
+    {
+        return FeePolicy::allowance($expected);
     }
 }

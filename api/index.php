@@ -20,6 +20,7 @@ use Payxy\Checkout\CheckoutRequest;
 use Payxy\Exception\PayxyException;
 use Payxy\Exception\RequestFailedException;
 use Payxy\Exception\WebhookVerificationException;
+use Payxy\Payments\AmountCheck;
 use Payxy\Payments\Request\InitializePaymentRequest;
 use Payxy\Payments\Response\VerifyPaymentResponse;
 use Payxy\Payxy;
@@ -27,6 +28,7 @@ use Payxy\PayxyConfig;
 use Payxy\ResponseCode;
 use Payxy\Support\Amount;
 use Payxy\Support\Reference;
+use Playground\FeePolicy;
 use Playground\Orders;
 use Playground\State;
 use Playground\ShopCheckout;
@@ -47,6 +49,8 @@ $payxy = new Payxy(new PayxyConfig(
     webhookSecret: getenv('PAYXY_WEBHOOK_SECRET') ?: null,
 ));
 $orders = new Orders();
+View::$live = $payxy->getConfig()->environment->name === 'Production';
+View::$badge = $payxy->getConfig()->environment->name . ' · SDK: ' . (getenv('PAYXY_SDK_SOURCE') ?: 'Packagist') . ' · ' . FeePolicy::describe();
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 try {
@@ -155,16 +159,20 @@ function backendReturn(Payxy $payxy, Orders $orders): void
     }
 
     $expected = $orders->amount($transactionId);
-    $paid = $verification->isPaid() && $expected !== null && $verification->amountMatches($expected, 'NGN');
+    $check = $verification->isPaid() && $expected !== null
+        ? $verification->checkAmount($expected, 'NGN', FeePolicy::allowance($expected))
+        : null;
     [$label, $tone] = match (true) {
-        $paid => ['Paid: fulfil the order', 'ok'],
-        $verification->isPaid() => ['Paid, but amount mismatch: do not fulfil', 'bad'],
+        $check === AmountCheck::WithinFeeAllowance => ['Paid (surplus within fee allowance): fulfil the order', 'ok'],
+        $check?->isAcceptable() === true => ['Paid: fulfil the order', 'ok'],
+        $verification->isPaid() => ['Paid, but amount check failed: do not fulfil', 'bad'],
         $verification->isPending() => ['Pending: check again later', 'warn'],
         default => ['Not paid', 'bad'],
     };
     $orders->markStatus($transactionId, $label);
 
-    echo View::page('Backend result', View::table(['Result' => View::badge($label, $tone)] + verificationRows($transactionId, $expected, $verification))
+    $rows = ['Result' => View::badge($label, $tone), 'Amount check' => amountCheckCell($check)];
+    echo View::page('Backend result', View::table($rows + verificationRows($transactionId, $expected, $verification))
         . debugVerification('backend', $transactionId, $expected, $verification)
         . links('/backend/return?recheck=' . rawurlencode($transactionId), '/backend'));
 }
@@ -200,7 +208,7 @@ function sdkReturn(Payxy $payxy, Orders $orders, string $baseUrl): void
         CheckoutOutcome::Pending => 'warn',
         default => 'bad',
     };
-    $rows = ['Outcome' => View::badge($result->outcome->name, $tone)]
+    $rows = ['Outcome' => View::badge($result->outcome->name, $tone), 'Amount check' => amountCheckCell($result->amountCheck)]
         + verificationRows($transactionId, $orders->amount($transactionId), $result->verification);
 
     echo View::page('SDK page result', View::table($rows)
@@ -260,6 +268,8 @@ function apiConfirm(Payxy $payxy, Orders $orders, string $baseUrl, string $trans
     json([
         'transactionId' => $transactionId,
         'outcome' => $result->outcome->value,
+        'amountCheck' => $result->amountCheck?->value,
+        'feePolicy' => FeePolicy::describe(),
         'orderAmount' => (string) $orders->amount($transactionId),
         'payxy' => $v === null ? null : [
             'responseCode' => $v->getResponseCode(),
@@ -331,13 +341,23 @@ function debugVerification(string $flow, string $transactionId, ?Amount $expecte
         'flow' => $flow,
         'transactionId' => $transactionId,
         'orderAmount' => $expected === null ? null : (string) $expected,
-        'amountMatches' => $expected !== null && $v !== null ? $v->amountMatches($expected, 'NGN') : null,
+        'amountCheck' => $expected !== null && $v !== null ? $v->checkAmount($expected, 'NGN', FeePolicy::allowance($expected))->value : null,
+        'feePolicy' => FeePolicy::describe(),
+        'hasFeeBreakdown' => $v?->hasFeeBreakdown(),
         'raw' => $v?->toArray(),
     ];
     $json = (string) json_encode($entry, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_PARTIAL_OUTPUT_ON_ERROR);
     error_log('[payxy-verify] ' . $json);
 
     return '<script>console.log("[payxy-verify]", ' . $json . ');</script>';
+}
+
+/** Why the amount was (not) accepted, plus the fee policy in force. */
+function amountCheckCell(?AmountCheck $check): string
+{
+    return $check === null
+        ? '—'
+        : View::badge($check->value, $check->isAcceptable() ? 'ok' : 'bad') . ' <span class="muted">(' . View::e(FeePolicy::describe()) . ')</span>';
 }
 
 /** The explicit "Re-check status" link names one of our own orders. */

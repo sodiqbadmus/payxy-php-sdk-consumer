@@ -9,6 +9,11 @@ namespace Playground;
  */
 final class View
 {
+    /** Header pill text, e.g. "Production · SDK: local branch"; set once by the front controller. */
+    public static string $badge = 'payxy/payxy-php-sdk';
+
+    public static bool $live = false;
+
     public static function page(string $title, string $body, string $extraHead = ''): string
     {
         return '<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -16,7 +21,7 @@ final class View
             . '<title>' . self::e($title) . ' · Payxy Playground</title>'
             . '<link rel="stylesheet" href="/assets/app.css">' . $extraHead . '</head>'
             . '<body><header class="top"><a href="/" class="brand">Payxy <span>Playground</span></a>'
-            . '<span class="pill">Sandbox · payxy/payxy-php-sdk from Packagist</span></header>'
+            . '<span class="pill' . (self::$live ? ' live' : '') . '">' . self::e(self::$badge) . '</span></header>'
             . '<main><h1>' . self::e($title) . '</h1>' . $body . '</main></body></html>';
     }
 

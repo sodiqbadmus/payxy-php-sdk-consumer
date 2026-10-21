@@ -5,8 +5,8 @@
     "license": "proprietary",
     "require": {
         "php": "^8.2",
-        "payxy/payxy-php-sdk": "^1.0",
-        "guzzlehttp/guzzle": "^7.9"
+        "guzzlehttp/guzzle": "^7.9",
+        "payxy/payxy-php-sdk": "dev-master as 1.1.0"
     },
     "autoload": {
         "psr-4": { "Playground\\": "src/" }
